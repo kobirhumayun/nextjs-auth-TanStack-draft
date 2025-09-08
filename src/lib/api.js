@@ -1,6 +1,5 @@
-﻿function isServer() {
-  return typeof window === "undefined";
-}
+﻿// lib/api.js
+function isServer() { return typeof window === "undefined"; }
 
 function buildAbs(urlOrPath, base) {
   const s = String(urlOrPath || "");
@@ -19,22 +18,18 @@ function normalizeHeaders(hdrs) {
 function prepareInit(init, bearer, { skipAuth = false } = {}) {
   const final = { cache: "no-store", ...init };
   const h = normalizeHeaders(final.headers);
-
   if (!skipAuth && bearer) {
-    const lower = Object.keys(h).reduce((m,k)=>(m[k.toLowerCase()]=k,m),{});
+    const lower = Object.keys(h).reduce((m, k) => (m[k.toLowerCase()] = k, m), {});
     if (!("authorization" in lower)) h.Authorization = `Bearer ${bearer}`;
   }
-
   const body = final.body;
   const isPO = body && typeof body === "object" &&
     !(body instanceof FormData) && !(body instanceof Blob) &&
     !(body instanceof ArrayBuffer) && !(body instanceof ReadableStream);
-
   if (isPO) {
     h["Content-Type"] = h["Content-Type"] || "application/json";
     final.body = JSON.stringify(body);
   }
-
   if (final.credentials === undefined) final.credentials = "omit";
   final.headers = h;
   return final;
@@ -44,7 +39,7 @@ async function markDynamicIfServer() {
   if (!isServer()) return;
   try {
     const mod = await import("next/headers");
-    void mod.headers(); // marks route as dynamic
+    void mod.headers(); // mark route dynamic for fetch caching
   } catch {}
 }
 
@@ -52,20 +47,20 @@ export async function apiRequest(input, init = {}) {
   await markDynamicIfServer();
 
   if (isServer()) {
-    // Server: direct to Express with fresh bearer
     const base = (process.env.AUTH_BACKEND_URL || "http://localhost:4000").replace(/\/$/, "");
     const { auth } = await import("@/auth");
-    const session = await auth();
+    const session = await auth();                  // pulls fresh access token
     const bearer = session?.accessToken || null;
-    const res = await fetch(buildAbs(input, base), prepareInit(init, bearer));
-    return res;
+    return fetch(buildAbs(input, base), {
+      ...prepareInit(init, bearer),
+      signal: init.signal,                          // ← AbortSignal support
+    });
   }
 
-  // Client: go through Next proxy (no bearer needed)
+  // Browser → go through server proxy (injects Bearer server-side)
   const path = String(input || "");
   const url = path.startsWith("/api/proxy/") ? path : `/api/proxy${path.startsWith("/") ? path : `/${path}`}`;
-  const res = await fetch(url, prepareInit(init, null, { skipAuth: true }));
-  return res;
+  return fetch(url, { ...prepareInit(init, null, { skipAuth: true }), signal: init.signal });
 }
 
 export async function apiJSON(input, init = {}) {
